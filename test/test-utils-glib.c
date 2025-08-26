@@ -953,7 +953,7 @@ test_check_tcp_works (void)
                                       "%s",
                                       system_message);
       g_test_skip (skip_message);
-      free (skip_message);
+      g_free (skip_message);
     }
 
   if (addrs != NULL)
