@@ -2725,6 +2725,75 @@ static Config send_destination_prefix_config = {
     TEST_USER_ME, SPECIFY_ADDRESS
 };
 
+static Config sameuser_allow_signal_config = {
+    NULL, 1, "valid-config-files/sameuser-allow-signal.conf",
+    TEST_USER_ME, SPECIFY_ADDRESS
+};
+
+static Config sameuser_deny_signal_other_config = {
+    NULL, 1, "valid-config-files/sameuser-allow-signal.conf",
+    TEST_USER_OTHER, SPECIFY_ADDRESS
+};
+
+static Config sameuser_deny_signal_config = {
+    NULL, 1, "valid-config-files/sameuser-deny-signal.conf",
+    TEST_USER_ME, SPECIFY_ADDRESS
+};
+
+static void
+test_sameuser_signal_allowed (Fixture *f,
+                              gconstpointer context G_GNUC_UNUSED)
+{
+  const char *match_rule = "type='signal',interface='com.example',member='Shouted'";
+
+  if (f->skip)
+    return;
+
+  add_shouted_signal_filter (f);
+  add_echo_filter (f);
+
+  dbus_bus_add_match (f->left_conn, match_rule, &f->e);
+  test_assert_no_error (&f->e);
+
+  f->signal_counter = 0;
+  right_conn_emit_shouted (f);
+
+  while (f->signal_counter < 1)
+    test_main_context_iterate (f->ctx, TRUE);
+
+  g_assert_cmpuint (f->signal_counter, ==, 1);
+
+  dbus_bus_remove_match (f->left_conn, match_rule, &f->e);
+  test_assert_no_error (&f->e);
+}
+
+static void
+test_sameuser_signal_denied (Fixture *f,
+                             gconstpointer context G_GNUC_UNUSED)
+{
+  const char *match_rule = "type='signal',interface='com.example',member='Shouted'";
+
+  if (f->skip)
+    return;
+
+  add_shouted_signal_filter (f);
+  add_echo_filter (f);
+
+  dbus_bus_add_match (f->left_conn, match_rule, &f->e);
+  test_assert_no_error (&f->e);
+
+  f->signal_counter = 0;
+  right_conn_emit_shouted (f);
+
+  /* Ensure ordering: if the signal would arrive, it would do so before the reply. */
+  echo_left_to_right (f, 1);
+
+  g_assert_cmpuint (f->signal_counter, ==, 0);
+
+  dbus_bus_remove_match (f->left_conn, match_rule, &f->e);
+  test_assert_no_error (&f->e);
+}
+
 static void
 test_match_remove_fails (Fixture *f,
                          gconstpointer context G_GNUC_UNUSED)
@@ -2828,6 +2897,15 @@ main (int argc,
       setup, test_match_remove_fails, teardown);
   g_test_add ("/match/remove/succeeds", Fixture, NULL,
       setup, test_match_remove_succeeds, teardown);
+  g_test_add ("/policy/sameuser/allow-signal", Fixture,
+      &sameuser_allow_signal_config,
+      setup, test_sameuser_signal_allowed, teardown);
+  g_test_add ("/policy/sameuser/deny-signal-other", Fixture,
+      &sameuser_deny_signal_other_config,
+      setup, test_sameuser_signal_denied, teardown);
+  g_test_add ("/policy/sameuser/deny-signal", Fixture,
+      &sameuser_deny_signal_config,
+      setup, test_sameuser_signal_denied, teardown);
   g_test_add ("/peer/ping", Fixture, NULL, setup, test_peer_ping, teardown);
   g_test_add ("/peer/get-machine-id", Fixture, NULL,
       setup, test_peer_get_machine_id, teardown);

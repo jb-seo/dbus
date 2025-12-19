@@ -134,11 +134,21 @@ struct BusPolicy
   int refcount;
 
   DBusList *default_rules;         /**< Default policy rules */
+  DBusList *sameuser_rules;        /**< Same-user policy rules */
   DBusList *mandatory_rules;       /**< Mandatory policy rules */
   DBusHashTable *rules_by_uid;     /**< per-UID policy rules */
   DBusHashTable *rules_by_gid;     /**< per-GID policy rules */
   DBusList *at_console_true_rules; /**< console user policy rules where at_console="true"*/
   DBusList *at_console_false_rules; /**< console user policy rules where at_console="false"*/
+};
+
+struct BusClientPolicy
+{
+  int refcount;
+
+  DBusList *rules;
+  dbus_uid_t uid;
+  dbus_bool_t has_uid;
 };
 
 static void
@@ -216,6 +226,9 @@ bus_policy_unref (BusPolicy *policy)
     {
       _dbus_list_foreach (&policy->default_rules, free_rule_func, NULL);
       _dbus_list_clear (&policy->default_rules);
+
+      _dbus_list_foreach (&policy->sameuser_rules, free_rule_func, NULL);
+      _dbus_list_clear (&policy->sameuser_rules);
 
       _dbus_list_foreach (&policy->mandatory_rules, free_rule_func, NULL);
       _dbus_list_clear (&policy->mandatory_rules);
@@ -297,6 +310,10 @@ bus_policy_create_client_policy (BusPolicy      *policy,
                            client))
     goto nomem;
 
+  if (!add_list_to_client (&policy->sameuser_rules,
+                           client))
+    goto nomem;
+
   /* we avoid the overhead of looking up user's groups
    * if we don't have any group rules anyway
    */
@@ -334,6 +351,9 @@ bus_policy_create_client_policy (BusPolicy      *policy,
   
   if (dbus_connection_get_unix_user (connection, &uid))
     {
+      client->uid = uid;
+      client->has_uid = TRUE;
+
       if (_dbus_hash_table_get_n_entries (policy->rules_by_uid) > 0)
         {
           DBusList **list;
@@ -509,6 +529,20 @@ bus_policy_append_default_rule (BusPolicy      *policy,
 }
 
 dbus_bool_t
+bus_policy_append_sameuser_rule (BusPolicy      *policy,
+                                 BusPolicyRule  *rule)
+{
+  rule->require_same_user = 1;
+
+  if (!_dbus_list_append (&policy->sameuser_rules, rule))
+    return FALSE;
+
+  bus_policy_rule_ref (rule);
+
+  return TRUE;
+}
+
+dbus_bool_t
 bus_policy_append_mandatory_rule (BusPolicy      *policy,
                                   BusPolicyRule  *rule)
 {
@@ -674,6 +708,10 @@ bus_policy_merge (BusPolicy *policy,
   if (!append_copy_of_policy_list (&policy->default_rules,
                                    &to_absorb->default_rules))
     return FALSE;
+
+  if (!append_copy_of_policy_list (&policy->sameuser_rules,
+                                   &to_absorb->sameuser_rules))
+    return FALSE;
   
   if (!append_copy_of_policy_list (&policy->mandatory_rules,
                                    &to_absorb->mandatory_rules))
@@ -698,13 +736,6 @@ bus_policy_merge (BusPolicy *policy,
   return TRUE;
 }
 
-struct BusClientPolicy
-{
-  int refcount;
-
-  DBusList *rules;
-};
-
 BusClientPolicy*
 bus_client_policy_new (void)
 {
@@ -717,6 +748,67 @@ bus_client_policy_new (void)
   policy->refcount = 1;
 
   return policy;
+}
+
+static dbus_bool_t
+same_user_allows_bus_driver (BusClientPolicy *policy)
+{
+  if (!policy->has_uid)
+    return FALSE;
+
+  return _dbus_unix_user_is_process_owner (policy->uid);
+}
+
+static dbus_bool_t
+rule_matches_same_user_send (BusPolicyRule   *rule,
+                             BusClientPolicy *policy,
+                             DBusConnection  *receiver,
+                             DBusMessage     *message)
+{
+  if (!rule->require_same_user)
+    return TRUE;
+
+  if (!policy->has_uid)
+    return FALSE;
+
+  if (receiver == NULL)
+    {
+      if (dbus_message_has_destination (message, DBUS_SERVICE_DBUS))
+        return same_user_allows_bus_driver (policy);
+
+      return FALSE;
+    }
+
+  {
+    dbus_uid_t other_uid;
+
+    if (!dbus_connection_get_unix_user (receiver, &other_uid))
+      return FALSE;
+
+    return other_uid == policy->uid;
+  }
+}
+
+static dbus_bool_t
+rule_matches_same_user_receive (BusPolicyRule   *rule,
+                                BusClientPolicy *policy,
+                                DBusConnection  *sender)
+{
+  dbus_uid_t other_uid;
+
+  if (!rule->require_same_user)
+    return TRUE;
+
+  if (!policy->has_uid)
+    return FALSE;
+
+  if (sender == NULL)
+    return same_user_allows_bus_driver (policy);
+
+  if (!dbus_connection_get_unix_user (sender, &other_uid))
+    return FALSE;
+
+  return other_uid == policy->uid;
 }
 
 BusClientPolicy *
@@ -825,7 +917,8 @@ bus_client_policy_optimize (BusClientPolicy *policy)
             rule->d.send.interface == NULL &&
             rule->d.send.member == NULL &&
             rule->d.send.error == NULL &&
-            rule->d.send.destination == NULL;
+            rule->d.send.destination == NULL &&
+            !rule->require_same_user;
           break;
         case BUS_POLICY_RULE_RECEIVE:
           remove_preceding =
@@ -834,7 +927,8 @@ bus_client_policy_optimize (BusClientPolicy *policy)
             rule->d.receive.interface == NULL &&
             rule->d.receive.member == NULL &&
             rule->d.receive.error == NULL &&
-            rule->d.receive.origin == NULL;
+            rule->d.receive.origin == NULL &&
+            !rule->require_same_user;
           break;
         case BUS_POLICY_RULE_OWN:
           remove_preceding =
@@ -910,6 +1004,12 @@ bus_client_policy_check_can_send (BusClientPolicy *policy,
       if (rule->type != BUS_POLICY_RULE_SEND)
         {
           _dbus_verbose ("  (policy) skipping non-send rule\n");
+          continue;
+        }
+
+      if (!rule_matches_same_user_send (rule, policy, receiver, message))
+        {
+          _dbus_verbose ("  (policy) skipping rule because sender/receiver UID differs\n");
           continue;
         }
 
@@ -1168,6 +1268,12 @@ bus_client_policy_check_can_receive (BusClientPolicy *policy,
       if (rule->type != BUS_POLICY_RULE_RECEIVE)
         {
           _dbus_verbose ("  (policy) skipping non-receive rule\n");
+          continue;
+        }
+
+      if (!rule_matches_same_user_receive (rule, policy, sender))
+        {
+          _dbus_verbose ("  (policy) skipping rule because sender/receiver UID differs\n");
           continue;
         }
 

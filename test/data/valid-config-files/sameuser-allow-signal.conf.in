@@ -1,0 +1,23 @@
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>@TEST_LISTEN@</listen>
+
+  <policy context="default">
+    <allow send_type="method_call"/>
+    <allow receive_type="method_call"/>
+    <allow send_type="method_return"/>
+    <allow receive_type="method_return"/>
+    <allow receive_type="error"/>
+    <allow send_destination="org.freedesktop.DBus"/>
+    <allow receive_type="signal" receive_interface="org.freedesktop.DBus"/>
+    <deny send_type="signal"/>
+    <deny receive_type="signal"/>
+  </policy>
+
+  <policy context="sameuser">
+    <allow send_type="signal" send_broadcast="true"/>
+    <allow receive_type="signal"/>
+  </policy>
+</busconfig>

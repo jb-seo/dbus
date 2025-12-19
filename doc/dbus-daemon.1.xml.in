@@ -902,9 +902,9 @@ name, and a "send_destination" rule to allow traffic from some or all uids to
 your service.</para>
 
 
-<para>The &lt;policy&gt; element has one of four attributes:</para>
+<para>The &lt;policy&gt; element has one of five attributes:</para>
 <literallayout remap='.nf'>
-  context="(default|mandatory)"
+  context="(default|sameuser|mandatory)"
   at_console="(true|false)"
   user="username or userid"
   group="group name or gid"
@@ -914,6 +914,7 @@ your service.</para>
 <para>Policies are applied to a connection as follows:</para>
 <literallayout remap='.nf'>
    - all context="default" policies are applied
+   - all context="sameuser" policies are applied
    - all group="connection's user's group" policies are applied
      in undefined order
    - all user="connection's auth user" policies are applied

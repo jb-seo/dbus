@@ -45,6 +45,7 @@ typedef enum
 
   /* non-ignored */
   POLICY_DEFAULT,
+  POLICY_SAMEUSER,
   POLICY_MANDATORY,
   POLICY_USER,
   POLICY_GROUP,
@@ -1127,6 +1128,10 @@ start_busconfig_child (BusConfigParser   *parser,
             {
               e->d.policy.type = POLICY_DEFAULT;
             }
+          else if (strcmp (context, "sameuser") == 0)
+            {
+              e->d.policy.type = POLICY_SAMEUSER;
+            }
           else if (strcmp (context, "mandatory") == 0)
             {
               e->d.policy.type = POLICY_MANDATORY;
@@ -1134,7 +1139,7 @@ start_busconfig_child (BusConfigParser   *parser,
           else
             {
               dbus_set_error (error, DBUS_ERROR_FAILED,
-                              "context attribute on <policy> must have the value \"default\" or \"mandatory\", not \"%s\"",
+                              "context attribute on <policy> must have the value \"default\", \"sameuser\" or \"mandatory\", not \"%s\"",
                               context);
               return FALSE;
             }
@@ -1845,6 +1850,24 @@ append_rule_from_element (BusConfigParser   *parser,
           
         case POLICY_DEFAULT:
           if (!bus_policy_append_default_rule (parser->policy, rule))
+            goto nomem;
+          break;
+        case POLICY_SAMEUSER:
+          if (!BUS_POLICY_RULE_IS_PER_CLIENT (rule))
+            {
+              dbus_set_error (error, DBUS_ERROR_FAILED,
+                              "<%s> rule cannot be used in context=\"sameuser\" because it has bus-global semantics",
+                              element_name);
+              goto failed;
+            }
+          if (rule->type == BUS_POLICY_RULE_OWN)
+            {
+              dbus_set_error (error, DBUS_ERROR_FAILED,
+                              "<%s> rule cannot be used in context=\"sameuser\" because it can affect name ownership",
+                              element_name);
+              goto failed;
+            }
+          if (!bus_policy_append_sameuser_rule (parser->policy, rule))
             goto nomem;
           break;
         case POLICY_MANDATORY:

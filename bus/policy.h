@@ -59,6 +59,7 @@ struct BusPolicyRule
   BusPolicyRuleType type;
 
   unsigned int allow : 1; /**< #TRUE if this allows, #FALSE if it denies */
+  unsigned int require_same_user : 1; /**< #TRUE if sender/receiver must share UID */
   
   union
   {
@@ -136,6 +137,8 @@ dbus_bool_t      bus_policy_allow_unix_user       (BusPolicy        *policy,
 dbus_bool_t      bus_policy_allow_windows_user    (BusPolicy        *policy,
                                                    const char       *windows_sid);
 dbus_bool_t      bus_policy_append_default_rule   (BusPolicy        *policy,
+                                                   BusPolicyRule    *rule);
+dbus_bool_t      bus_policy_append_sameuser_rule  (BusPolicy        *policy,
                                                    BusPolicyRule    *rule);
 dbus_bool_t      bus_policy_append_mandatory_rule (BusPolicy        *policy,
                                                    BusPolicyRule    *rule);
